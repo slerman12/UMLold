@@ -13,7 +13,6 @@ from torchvision.transforms import functional as F
 from dm_env import specs, StepType
 
 from Datasets.Suites._Wrappers import ActionSpecWrapper, AugmentAttributesWrapper, ExtendedTimeStep
-from Datasets.ReplayBuffer.Classify._TinyImageNet import TinyImageNet
 
 
 class ClassifyEnv:
@@ -125,15 +124,12 @@ def make(task, frame_stack=4, action_repeat=4, max_episode_frames=None, truncate
      'VOCSegmentation', 'VOCDetection', 'Cityscapes', 'ImageNet',
      'Caltech101', 'Caltech256', 'CelebA', 'WIDERFace', 'SBDataset',
      'VisionDataset', 'USPS', 'Kinetics400', 'HMDB51', 'UCF101',
-     'Places365', 'TinyImageNet')
-
-     TODO: iNaturalist!
+     'Places365')
     """
 
-    assert task in torchvision.datasets.__all__ or task == 'TinyImageNet'
+    assert task in torchvision.datasets.__all__
 
-    dataset = TinyImageNet if task == 'TinyImageNet' \
-        else getattr(torchvision.datasets, task)
+    dataset = getattr(torchvision.datasets, task)
 
     path = f'./Datasets/ReplayBuffer/Classify/{task}_{"Train" if train else "Eval"}'
 

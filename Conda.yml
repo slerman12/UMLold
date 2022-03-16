@@ -32,4 +32,3 @@ dependencies:
       - ale-py
       - gym
       - einops
-      - opt_einsum_torch

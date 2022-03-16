@@ -5,113 +5,89 @@
 import torch
 from torch import nn
 
-from Blocks.Architectures.Vision.CNN import CNN
+from Blocks.Architectures.Residual import Residual
+
+import Utils
+
 
 """
 A custom "what" pathway: Non-locality stream architectures for BioNet
 """
 
 
-class Conv2dInvariant(nn.Conv2d):
+class Conv2DInvariant(nn.Conv2d):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0,
-                 groups=1, bias=True, padding_mode='zeros', dilations=4):
-        super().__init__(in_channels, out_channels, kernel_size, stride,
-                         padding, (1, 1), groups, bias, padding_mode)
+                 groups=1, bias=True, padding_mode='zeros', num_dilations=4):
+        super().__init__(in_channels, out_channels,
+                         kernel_size, stride, padding, (1, 1), groups, bias, padding_mode)
 
-        self.dilations = dilations
+        self.num_dilations = num_dilations
 
-    def forward(self, x):
-        # Conserve leading dims
-        lead_shape = x.shape[:-3]
-        # Operate on last 3 dims
-        x = x.flatten(0, -4)
+    def forward(self, input):
+        shape = input.shape
+        input = input.view(-1, *shape[-3:])
 
         convs = []
 
-        padding = [self.padding, self.padding] if isinstance(self.padding, int) \
-            else self.padding
-
-        for dila in range(self.dilations):
-            d = self.dilations - dila
-
-            self.dilation = (d, d)
-
-            # TODO Does this equalize dilated spatial axes?
-            self.padding = tuple(pad + dila for pad in padding)
+        for dila in reversed(range(1, self.num_dilations + 1)):
+            self.dilation = (dila, dila)  # todo different heights/widths for diff dilations, breaks!
 
             for _ in range(4):
-                convs.append(self._conv_forward(x, self.weight, self.bias))
+                convs.append(self._conv_forward(input, self.weight, self.bias))
 
-                # Rotation  # TODO Check...
+                # Rotation  # todo check...
                 self.weight.data.copy_(torch.rot90(self.weight, dims=[-1, -2]))
 
         convs = torch.stack(convs, 1)
-
-        # Restore leading dims
-        convs = convs.view(*lead_shape, *convs.shape[1:])
-        return convs
+        return convs.view(*shape[:-3], *convs.shape[1:])
 
 
-class NonLocalityCNN(CNN):
-    def __init__(self, input_shape, out_channels=128, depth=3, batch_norm=False, output_dim=None):
-        super().__init__(input_shape, out_channels, depth, batch_norm, output_dim)
+class NonLocalityCNN(nn.Module):
+    def __init__(self, input_shape, out_channels=64, groups=8,
+                 num_dilations=1, depth=3, output_dim=None):
+        super().__init__()
 
         in_channels = input_shape[0]
 
-        self.CNN = nn.Sequential(
-            *[nn.Sequential(Conv2dInvariant(in_channels if i == 0 else out_channels,
-                                            out_channels, 3, stride=2 if i == 0 else 1),
-                            nn.BatchNorm2d(self.out_channels) if batch_norm else nn.Identity(),
-                            nn.ReLU()) for i in range(depth + 1)],
+        self.trunk = nn.Sequential(
+            # Conv2DInvariant(in_channels,
+            #                 out_channels, (4, 4), num_dilations=num_dilations),
+            nn.Conv2d(in_channels, out_channels, (4, 4)),
+            Utils.ChannelSwap(),
+            nn.GELU(),
+            nn.LayerNorm(out_channels),
+            Utils.ChannelSwap()
         )
 
+        self.CNN = nn.Sequential(
+            *[Residual(nn.Sequential(
+                # Conv2DInvariant(out_channels,
+                #                 out_channels, (2, 2), padding='same', groups=groups, num_dilations=num_dilations),
+                nn.Conv2d(out_channels, out_channels, (2, 2), padding='same'),
+                Utils.ChannelSwap(),
+                nn.GELU(),
+                nn.LayerNorm(out_channels),
+                Utils.ChannelSwap()
+            )
+            ) for _ in range(depth)])
 
-# class NonLocalityCNN(nn.Module):
-#     def __init__(self, input_shape, out_channels=64, groups=8,
-#                  num_dilations=1, depth=3, output_dim=None):
-#         super().__init__()
-#
-#         in_channels = input_shape[0]
-#
-#         self.trunk = nn.Sequential(
-#             # Conv2DInvariant(in_channels,
-#             #                 out_channels, (4, 4), num_dilations=num_dilations),
-#             nn.Conv2d(in_channels, out_channels, (4, 4)),
-#             Utils.ChannelSwap(),
-#             nn.GELU(),
-#             nn.LayerNorm(out_channels),
-#             Utils.ChannelSwap()
-#         )
-#
-#         self.CNN = nn.Sequential(
-#             *[Residual(nn.Sequential(
-#                 # Conv2DInvariant(out_channels,
-#                 #                 out_channels, (2, 2), padding='same', groups=groups, num_dilations=num_dilations),
-#                 nn.Conv2d(out_channels, out_channels, (2, 2), padding='same'),
-#                 Utils.ChannelSwap(),
-#                 nn.GELU(),
-#                 nn.LayerNorm(out_channels),
-#                 Utils.ChannelSwap()
-#             )
-#             ) for _ in range(depth)])
-#
-#         # self.CNN = nn.Sequential(
-#         #     *[Residual(nn.Sequential(
-#         #         nn.Flatten(0, 1),
-#         #         nn.Conv2d(out_channels, out_channels, (2, 2), padding='same', groups=groups),
-#         #         Unflatten(-1, num_dilations * num_rotations, 1, 1, 1),
-#         #         Utils.ChannelSwap(),
-#         #         nn.GELU(),
-#         #         layer_norm(),
-#         #         Utils.ChannelSwap()
-#         #     )
-#         #     ) for _ in range(depth)])
-#
-#     def feature_shape(self, c, h, w):
-#         return Utils.cnn_feature_shape(c, h, w, self.trunk)
-#
-#     def forward(self, x):
-#         return self.CNN(self.trunk(x))
+        # self.CNN = nn.Sequential(
+        #     *[Residual(nn.Sequential(
+        #         nn.Flatten(0, 1),
+        #         nn.Conv2d(out_channels, out_channels, (2, 2), padding='same', groups=groups),
+        #         Unflatten(-1, num_dilations * num_rotations, 1, 1, 1),
+        #         Utils.ChannelSwap(),
+        #         nn.GELU(),
+        #         layer_norm(),
+        #         Utils.ChannelSwap()
+        #     )
+        #     ) for _ in range(depth)])
+
+    def feature_shape(self, c, h, w):
+        return Utils.cnn_feature_shape(c, h, w, self.trunk)
+
+    def forward(self, x):
+        return self.CNN(self.trunk(x))
 
 
 # class Unflatten(nn.Module):  # Can use einops.layers.torch.Rearrange

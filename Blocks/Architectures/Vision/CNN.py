@@ -7,7 +7,7 @@ import Utils
 
 
 class CNN(nn.Module):
-    def __init__(self, input_shape, out_channels=32, depth=3, stride=2, padding=0, batch_norm=False, output_dim=None):
+    def __init__(self, input_shape, out_channels=32, depth=3, batch_norm=False, output_dim=None):
         super().__init__()
 
         self.input_shape = torch.Size(input_shape)
@@ -17,8 +17,7 @@ class CNN(nn.Module):
 
         self.CNN = nn.Sequential(
             *[nn.Sequential(nn.Conv2d(in_channels if i == 0 else out_channels,
-                                      out_channels, 3, stride=stride if i == 0 else 1,
-                                      padding=padding),
+                                      out_channels, 3, stride=2 if i == 0 else 1),
                             nn.BatchNorm2d(self.out_channels) if batch_norm else nn.Identity(),
                             nn.ReLU()) for i in range(depth + 1)],
         )
@@ -29,6 +28,8 @@ class CNN(nn.Module):
                                nn.Linear(out_channels * 3 * 3, 1024),
                                nn.ReLU(inplace=True),
                                nn.Linear(1024, output_dim))
+
+        self.apply(Utils.weight_init)
 
     def repr_shape(self, c, h, w):
         return Utils.cnn_feature_shape(c, h, w, self.trunk, self.CNN, self.projection)

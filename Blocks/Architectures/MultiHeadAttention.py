@@ -6,6 +6,7 @@ import math
 
 import torch
 from torch import nn
+from torch import einsum
 from opt_einsum_torch import EinsumPlanner
 import copy
 from einops import rearrange
@@ -16,57 +17,41 @@ import Utils
 
 
 class CrossAttention(nn.Module):
-    def __init__(self, dim=32, heads=None, context_dim=None, value_dim=None, ln_v=False, talk_h=False):
+    def __init__(self, dim=32, heads=8, context_dim=None, talk_h=False):
         super().__init__()
 
+        assert dim % heads == 0, f'dim={dim} does not divide heads={heads}'
         self.dim = dim
+        self.heads = heads
 
         context_dim = dim if context_dim is None \
             else context_dim
 
-        value_dim = dim if value_dim is None \
-            else value_dim
-
-        heads = math.gcd(8, value_dim) if heads is None \
-            else heads
-
-        self.value_dim = value_dim
-        self.heads = heads
-
-        assert value_dim % heads == 0, f'value dim={dim} is not divisible by heads={heads}'
-
         self.to_q = nn.Linear(dim, dim, bias=False)
-        self.to_kv = nn.Linear(context_dim, dim + value_dim, bias=False)
-
-        self.ln_v = nn.LayerNorm(value_dim // heads) if ln_v \
-            else nn.Identity()
+        self.to_kv = nn.Linear(context_dim, dim * 2, bias=False)
 
         # "Talking heads" (https://arxiv.org/abs/2003.02436)
-        self.talk_h = nn.Sequential(Utils.ChSwap, nn.Linear(heads, heads, bias=False),
-                                    nn.LayerNorm(heads), Utils.ChSwap) if talk_h else nn.Identity()
+        self.talk_h = nn.Sequential(Utils.ChannelSwap(),
+                                    nn.Linear(heads, heads, bias=False),
+                                    nn.LayerNorm(heads), Utils.ChannelSwap()) if talk_h else nn.Identity()
 
-    def forward(self, x, context=None):
+    def forward(self, x, context):
         # Conserves shape
         shape = x.shape
-        assert shape[-1] == self.dim, f'input dim ≠ pre-specified {shape[-1]}≠{self.dim}'
-
-        if context is None:
-            context = x
+        assert shape[-1] == self.dim, f'{shape[-1]}, {self.dim}'
 
         x = x.flatten(1, -2)
         context = context.flatten(1, -2)
 
         q = self.to_q(x)
-        k, v = self.to_kv(context).tensor_split([self.dim], dim=-1)
+        k, v = self.to_kv(context).chunk(2, dim=-1)
 
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=self.heads), (q, k, v))
 
-        v = self.ln_v(v)  # My variant, makes sure the values get an equal "vote"
+        # device = torch.device(q.device)
 
-        # Memory efficient toggle, e.g., =0.5
-        mem_limit = False
-        einsum = EinsumPlanner(q.device, cuda_mem_limit=mem_limit).einsum if 0 < mem_limit < 1 \
-            else torch.einsum
+        # ee = EinsumPlanner(device, cuda_mem_limit=0.2)
+        # dots = ee.einsum('b h i d, b h j d -> b h i j', q, k) * self.dim ** -0.5
 
         dots = einsum('b h i d, b h j d -> b h i j', q, k) * self.dim ** -0.5
 
@@ -75,22 +60,23 @@ class CrossAttention(nn.Module):
         # "Talking heads"
         attn = self.talk_h(attn)
 
-        attn = einsum('b h i j, b h j d -> b h i d', attn, v)
+        # ee = EinsumPlanner(device, cuda_mem_limit=0.2)
+        # out = ee.einsum('b h i j, b h j d -> b h i d', attn, v) * self.dim ** -0.5
+
+        attn = einsum('b h i j, b h j d -> b h i d', attn, v)  # todo maybe nn.MultiHeadAttention?
 
         out = rearrange(attn, 'b h n d -> b n (h d)')
 
         # Restores original shape
         out = out.view(shape)
-
-        if 0 < mem_limit < 1:
-            out = out.to(q.device)
+        # return out.view(shape).to(device)
 
         return out
 
 
 # A minimalist implementation using only Pytorch natives
 # class CrossAttention(nn.Module):
-#     def __init__(self, dim=32, heads=8, context_dim=None, *_):
+#     def __init__(self, dim=32, heads=8, context_dim=None, talk_h=False):
 #         super().__init__()
 #
 #         assert dim % heads == 0, f'dim={dim} does not divide heads={heads}'
@@ -113,39 +99,23 @@ class CrossAttention(nn.Module):
 
 
 class SelfAttention(CrossAttention):
-    def forward(self, x, *_):
-        return super().forward(x)
+    def forward(self, x, *args):
+        return super().forward(x, x)
 
 
 class CrossAttentionBlock(nn.Module):
-    def __init__(self, dim=32, heads=1, context_dim=None, value_dim=None, ln_input=False, ln_v=True, talk_h=False,
-                 optim_lr=None, ema_tau=None):
+    def __init__(self, dim=32, heads=8, context_dim=None, talk_h=False, optim_lr=None, ema_tau=None):
         super().__init__()
 
-        context_dim = dim if context_dim is None \
-            else context_dim
+        self.dim = dim
+        self.heads = heads
 
-        value_dim = dim if value_dim is None \
-            else value_dim
-
-        self.heads = math.gcd(8, value_dim) if heads is None \
-            else heads
-
-        self.value_dim = value_dim
-
-        self.attn = CrossAttention(dim, self.heads, context_dim, value_dim,
-                                   ln_v,  # My variant, norms value heads by default
-                                   talk_h)
-        self.mlp = MLP(value_dim, value_dim, value_dim, 1, nn.GELU())
-
-        self.ln_input = nn.LayerNorm(dim) if ln_input else nn.Identity()  # My variant, but default False
-        self.ln_attn = nn.LayerNorm(context_dim)
-        self.ln = nn.LayerNorm(value_dim)
+        self.ln1 = nn.LayerNorm(dim)
+        self.ln2 = nn.LayerNorm(dim)
+        self.attn = CrossAttention(dim, heads, context_dim, talk_h)
+        self.mlp = MLP(dim, dim, dim, 2, nn.GELU())
 
         self.init(optim_lr, ema_tau)
-
-    def repr_shape(self, c, h, w):
-        return self.value_dim, h, w  # Assumes channels last
 
     def init(self, optim_lr=None, ema_tau=None):
         # Initialize weights
@@ -160,56 +130,37 @@ class CrossAttentionBlock(nn.Module):
             self.ema = copy.deepcopy(self)
             self.ema_tau = ema_tau
 
-    def forward(self, x, context=None):
-        # if context is None:
-        #     context = x
-        #
-        # attn = self.ln_attn(self.attn(x, context)) + x
-        # out = self.ln(self.mlp(attn)) + attn
-        #
-        # return out
-        """My variant"""
-        x = self.ln_input(x)  # TODO This might help too
+    def forward(self, x, context):
+        attn = self.ln1(self.attn(x, context)) + x
+        out = self.ln2(self.mlp(attn)) + attn
 
-        if context is None:
-            context = x
-
-        # A key idea here is the layer-norm IN the attention, ln(values) rather than ln(attn)
-        attn = self.attn(x, context)  # If residual here, then attn="candidate update" with fc="correction" to x
-        fc = self.mlp(attn)  # This way MLP can help relationally-reason rather than just non-locally course-correct
-        ln = self.ln(fc)
-        return ln + x  # This variant can do relational reasoning, more capacity; THEN does a residual-based update
+        return out
 
 
 class SelfAttentionBlock(CrossAttentionBlock):
     def forward(self, x, *_):
-        return super().forward(x)
+        return super().forward(x, x)
 
 
 class AttentionPool(nn.Module):
-    def __init__(self, channels_in=32, heads=None, output_dim=None, depth=1, recursions=0, input_shape=None):
+    def __init__(self, channels_in=32, heads=None, output_dim=None, input_shape=None):
         super().__init__()
 
+        self.channels_in = channels_in
         self.input_shape = input_shape
 
         if input_shape is not None:
-            channels_in = input_shape[-3]
-
-        if output_dim is None:
-            output_dim = channels_in
+            channels_in = input_shape[-3] if len(input_shape) >= 3 else input_shape[-1]
 
         if heads is None:
-            heads = math.gcd(output_dim, 8)  # Approx 8
+            heads = (channels_in + 4) // 4
 
-        self.pool = nn.Sequential(Utils.ChSwap,
-                                  # Alternatively could also recurse
-                                  *([SelfAttentionBlock(channels_in, heads)] * recursions),
-                                  # "Transformer"
-                                  *[SelfAttentionBlock(dim=channels_in if i == 0 else output_dim, heads=heads,
-                                                       value_dim=output_dim) for i in range(depth)],
-                                  Utils.ChSwap,
+        self.pool = nn.Sequential(Utils.ChannelSwap(),
+                                  SelfAttentionBlock(dim=channels_in, heads=heads),
+                                  Utils.ChannelSwap(),
                                   nn.AdaptiveAvgPool2d((1, 1)),
-                                  nn.Flatten(-3))
+                                  nn.Flatten(),
+                                  nn.Linear(channels_in, channels_in if output_dim is None else output_dim))
 
     def repr_shape(self, c, h, w):
         return Utils.cnn_feature_shape(c, h, w, self.pool)
@@ -220,7 +171,7 @@ class AttentionPool(nn.Module):
             [context.view(*context.shape[:-3], -1, *self.input_shape[1:]) if len(context.shape) > 3
              else context.view(*context.shape[:-1], -1, *self.input_shape[1:]) if context.shape[-1]
                                                                                   % math.prod(self.input_shape[1:]) == 0
-            else context.view(*context.shape, 1, 1).expand(*context.shape, *self.input_shape[1:])
+             else context.view(*context.shape, 1, 1).expand(*context.shape, *self.input_shape[1:])
              for context in x if context.nelement() > 0], dim=-3)
         # Conserve leading dims
         lead_shape = x.shape[:-3]

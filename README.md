@@ -89,23 +89,9 @@ Optionally, for GPU support, install Pytorch with CUDA from https://pytorch.org/
 
 ## 1. Classify
 
-[comment]: <> (<details>)
-
-[comment]: <> (<summary><i>Click to open :open_book: </i></summary>)
-
-[comment]: <> (<br>)
-
 Comes preinstalled.
 
-[comment]: <> (</details>)
-
 ## 2. Atari Arcade
-
-[comment]: <> (<details>)
-
-[comment]: <> (<summary><i>Click to open :open_book: </i></summary>)
-
-[comment]: <> (<br>)
 
 You can use ```AutoROM``` if you accept the license.
 
@@ -119,16 +105,7 @@ mkdir ./Datasets/Suites/Atari_ROMS
 AutoROM --install-dir ./Datasets/Suites/Atari_ROMS
 ale-import-roms ./Datasets/Suites/Atari_ROMS
 ```
-
-[comment]: <> (</details>)
-
 ## 3. DeepMind Control
-
-[comment]: <> (<details>)
-
-[comment]: <> (<summary><i>Click to open :open_book: </i></summary>)
-
-[comment]: <> (<br>)
 
 Download MuJoCo from here: https://mujoco.org/download.
 
@@ -153,8 +130,6 @@ pip install --user dm_control
 
 to install DeepMind Control. For any issues, consult the [DMC repo](https://github.com/deepmind/dm_control).
 
-[comment]: <> (</details>)
-
 # :file_cabinet: Key files
 
 ```Run.py``` handles training and evaluation loops, saving, distributed training, logging, plotting.
@@ -166,12 +141,6 @@ to install DeepMind Control. For any issues, consult the [DMC repo](https://gith
 # :mag: Sample scripts
 
 ### RL
-
-[comment]: <> (<details>)
-
-[comment]: <> (<summary><i>Click to open :open_book: </i></summary>)
-
-[comment]: <> (<br>)
 
 Humanoid example: 
 ```
@@ -188,15 +157,7 @@ SPR Agent in DeepMind Control:
 python Run.py Agent=Agents.SPRAgent task=dmc/humanoid_walk
 ```
 
-[comment]: <> (</details>)
-
 ### Classification
-
-[comment]: <> (<details>)
-
-[comment]: <> (<summary><i>Click to open :open_book: </i></summary>)
-
-[comment]: <> (<br>)
 
 DQN Agent on MNIST:
 
@@ -214,15 +175,7 @@ Evaluation with exponential moving average (EMA) of params can be toggled with t
 
 [comment]: <> (Rollouts fill up data in an online fashion, piecemeal, until depletion &#40;all data is processed&#41; and gather metadata like past predictions, which may be useful for curriculum learning.)
 
-[comment]: <> (</details>)
-
 ### Generative Modeling
-
-[comment]: <> (<details>)
-
-[comment]: <> (<summary><i>Click to open :open_book: </i></summary>)
-
-[comment]: <> (<br>)
 
 Via the ```generate=true``` flag:
 ```
@@ -242,15 +195,7 @@ python Run.py task=atari/breakout generate=true evaluate_episodes=1 action_repea
 
 [comment]: <> (Kim et al. &#40;2018&#41; and iterative VAE &#40;IVAE&#41; by Marino et al. &#40;2018&#41;.)
 
-[comment]: <> (</details>)
-
 ### Offline RL
-
-[comment]: <> (<details>)
-
-[comment]: <> (<summary><i>Click to open :open_book: </i></summary>)
-
-[comment]: <> (<br>)
 
 From a saved experience replay, sans additional rollouts:
 
@@ -262,15 +207,7 @@ Assumes a replay [is saved](#saving).
 
 Implicitly treats ```replay.load=true``` and ```replay.save=true```, and only does evaluation rollouts.
 
-[comment]: <> (</details>)
-
 ### Saving
-
-[comment]: <> (<details>)
-
-[comment]: <> (<summary><i>Click to open :open_book: </i></summary>)
-
-[comment]: <> (<br>)
 
 Agents can be saved periodically or loaded with the ```save_per_steps=``` or ```load=true``` flags, and are automatically saved at end of training with ```save=true``` by default.
 
@@ -290,38 +227,14 @@ Careful, without ```replay.save=true``` a replay, whether new or loaded, will be
 
 Replays also save uniquely w.r.t. a date-time. In case of multiple saved replays per a unique experiment, the most recent is loaded.
 
-[comment]: <> (</details>)
-
 ### Custom Architectures
 
-[comment]: <> (<details>)
-
-[comment]: <> (<summary><i>Click to open :open_book: </i></summary>)
-
-[comment]: <> (<br>)
-
 One can also optionally pass in custom architectures such as those defined in ```./Blocks/Architectures```.
-
-Atari with ViT:
-
-```
-python Run.py recipes.Encoder.Eyes=Blocks.Architectures.ViT 
-```
-
-ResNet18 on CIFAR-10:
-
-```
-python Run.py task=classify/cifar10 RL=false recipes.Encoder.Eyes=Blocks.Architectures.ResNet18 
-```
-
-<details>
-<summary><i>See more examples :open_book: </i></summary>
-<br>
 
 To train, for example MNIST, using a Vision Transformer as the Encoder:
 
 ```
-python Run.py task=classify/mnist RL=false recipes.Encoder.Eyes=Blocks.Architectures.ViT
+python Run.py task=classify/mnist RL=false recipes.Encoder.Eyes=Blocks.Architectures.ViT 
 ```
 
 A GAN with a CNN Discriminator:
@@ -330,20 +243,31 @@ A GAN with a CNN Discriminator:
 python Run.py generate=True recipes.Critic.Q_head=Blocks.Architectures.CNN recipes.critic.q_head.input_shape='${obs_shape}' 
 ```
 
-Here is a more complex example, disabling the Encoder's flattening of the feature map, and instead giving the Actor and Critic unique Attention Pooling operations on their trunks to pool the unflattened features. The ```Null``` architecture disables that flattening component,
+Or Atari with ResNet:
 
 ```
-python Run.py recipes.Critic.trunk=Blocks.Architectures.AttentionPool recipes.Actor.trunk=Blocks.Architectures.AttentionPool task=classify/mnist offline=true recipes.Encoder.pool=Blocks.Architectures.Null
-
+python Run.py recipes.Encoder.Eyes=Blocks.Architectures.ResNet 
 ```
-
-since otherwise ```repr_shape``` is flattened to channel dim, with no features for the attention to pool.
-
-</details>
 
 Of course, it's always possible to just modify the code itself, which may be easier. See for example the two CNN variants in ```./Blocks/Encoders.py```.
 
-[comment]: <> (</details>)
+[comment]: <> (ResNet18 on CIFAR-10:)
+
+[comment]: <> (```)
+
+[comment]: <> (python Run.py task=classify/cifar10 RL=false recipes.Encoder.Eyes=Blocks.Architectures.ResNet18 )
+
+[comment]: <> (```)
+
+[comment]: <> (Here is a more complex example, disabling the Encoder's flattening of the feature map, and instead giving the Actor and Critic unique Attention Pooling operations on their trunks to pool the unflattened features. The Null architecture disables that flattening component.)
+
+[comment]: <> (```)
+
+[comment]: <> (python Run.py recipes.Critic.trunk=Blocks.Architectures.AttentionPool recipes.Actor.trunk=Blocks.Architectures.AttentionPool task=classify/mnist offline=true recipes.Encoder.pool=Blocks.Architectures.Null)
+
+[comment]: <> (```)
+
+[comment]: <> (Since otherwise repr_shape is flattened to channel dim, with no features for the attention to pool.)
 
 ### Distributed
 
@@ -357,12 +281,7 @@ python Run.py parallel=true
 
 which automatically parallelizes the Encoder's "Eyes" across all visible GPUs. The Encoder is usually the most compute-intensive architectural portion.
 
-To share whole agents across multiple parallel instances,
-<details>
-<summary><i>Click to open :open_book: </i></summary>
-<br>
-
-you can use the ```load_per_steps=``` flag.
+To share whole agents across multiple parallel instances, you can use the ```load_per_steps=``` flag. 
 
 For example, a data-collector agent and an update agent,
 
@@ -379,15 +298,8 @@ python Run.py offline=true save_per_steps=2
 in concurrent processes.
 
 Since both use the same experiment name, they will save and load from the same agent and replay, thereby emulating distributed training. **Highly experimental!**
-</details>
 
 ### Experiment naming, plotting
-
-[comment]: <> (<details>)
-
-[comment]: <> (<summary><i>Click to open :open_book: </i></summary>)
-
-[comment]: <> (<br>)
 
 The ```experiment=``` flag can help differentiate a distinct experiment; you can optionally control which experiment data is automatically plotted with ```plotting.plot_experiments=```.
 
@@ -396,8 +308,6 @@ python Run.py experiment=ExpName1 plotting.plot_experiments="['ExpName1']"
 ```
 
 A unique experiment for benchmarking and saving purposes, is distinguished by: ```experiment=```, ```Agent=```, ```task=```, and ```seed=``` flags.
-
-[comment]: <> (</details>)
 
 # :bar_chart: Agents & Performances
 
@@ -412,26 +322,6 @@ For generative modeling, well, it turns out that the difference between a Genera
 # :mortar_board: Pedagogy and Research
 
 All files are designed to be useful for educational and innovational purposes in their simplicity and structure.
-
-# :handshake: Contributing
-
-Contributers needed.
-
-Please, donate to help with affording compute and getting Benchmarks ready:
-
-[![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg?style=flat)](https://www.paypal.com/cgi-bin/)
-
-We are a nonprofit, single-PhD student team whose bank account is quickly hemmoraging.
-
-To discuss anything relating to funding or adding new features collaboratively, [please contact **agi.\_\_init\_\_**](mailto:agi.init@gmail.com). Appreciated!
-
-<details>
-<summary><i>List of features in progress :open_book: </i></summary>
-<br>
-
-in progress
-
-</details>
 
 # Note
 

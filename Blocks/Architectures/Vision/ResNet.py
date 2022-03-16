@@ -9,7 +9,6 @@ from torch import nn
 
 import Utils
 
-from Blocks.Architectures import MLP
 from Blocks.Architectures.Residual import Residual
 
 
@@ -69,6 +68,10 @@ class MiniResNet(nn.Module):
                                    nn.ReLU(inplace=True))
 
         # CNN ResNet-ish
+        # self.ResNet = nn.Sequential(*[ResidualBlock(dims[i + (j > 0)], dims[i + 1],
+        #                                             1 + (stride - 1) * (i > 0 and j > 0))
+        #                               for i, depth in enumerate(depths)
+        #                               for j in range(depth)])
         self.ResNet = nn.Sequential(*[nn.Sequential(*[ResidualBlock(dims[i + (j > 0)], dims[i + 1], kernel_size,
                                                                     1 + (stride - 1) * (i > 0 and j > 0))
                                                       for j in range(depth)])
@@ -77,7 +80,9 @@ class MiniResNet(nn.Module):
         self.projection = nn.Identity() if output_dim is None \
             else nn.Sequential(nn.AdaptiveAvgPool2d((1, 1)),
                                nn.Flatten(),
-                               MLP(dims[-1], output_dim, 1024))
+                               nn.Linear(dims[-1], 1024),
+                               nn.ReLU(inplace=True),
+                               nn.Linear(1024, output_dim))
 
     def repr_shape(self, c, h, w):
         return Utils.cnn_feature_shape(c, h, w, self.trunk, self.ResNet, self.projection)

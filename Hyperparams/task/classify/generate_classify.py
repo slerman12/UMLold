@@ -11,7 +11,7 @@ IMAGE_DATASETS = [
     'VOCSegmentation', 'VOCDetection', 'Cityscapes', 'ImageNet',
     'Caltech101', 'Caltech256', 'CelebA', 'WIDERFace', 'SBDataset',
     'VisionDataset', 'USPS', 'Kinetics400', 'HMDB51', 'UCF101',
-    'Places365', 'TinyImageNet'
+    'Places365'
 ]
 
 if __name__ == '__main__':

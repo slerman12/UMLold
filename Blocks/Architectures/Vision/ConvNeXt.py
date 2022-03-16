@@ -9,8 +9,6 @@ import torch.nn as nn
 
 import Utils
 
-from Blocks.Architectures import MLP
-
 
 class ConvNeXtBlock(nn.Module):
     def __init__(self, dim):
@@ -72,7 +70,9 @@ class ConvNeXt(nn.Module):
                                              nn.LayerNorm(dims[-1]),
                                              Utils.ChannelSwap()),
                                nn.Flatten(),
-                               MLP(dims[-1], output_dim, 1024))
+                               nn.Linear(dims[-1], 1024),
+                               nn.ReLU(inplace=True),
+                               nn.Linear(1024, output_dim))
 
         def weight_init(m):
             if isinstance(m, (nn.Conv2d, nn.Linear)):

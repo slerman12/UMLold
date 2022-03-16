@@ -4,4 +4,3 @@
 # MIT_LICENSE file in the root directory of this source tree.
 from Blocks.Architectures.LermanBlocks.BioNet.BioNet import BioNetV1
 from Blocks.Architectures.LermanBlocks.BioNet.BioNet import BioNetV1 as BioNet
-from Blocks.Architectures.LermanBlocks.BioNet.BioNet import BioNetV2

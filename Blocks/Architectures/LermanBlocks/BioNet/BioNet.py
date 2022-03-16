@@ -8,8 +8,6 @@ import Utils
 
 from Blocks.Architectures import ResNet, MLP
 from Blocks.Architectures.MultiHeadAttention import CrossAttentionBlock
-from Blocks.Architectures.Vision.CNN import CNN
-from Blocks.Architectures.LermanBlocks.BioNet.Locality import LocalityCNN
 
 
 class BioNetV1(nn.Module):
@@ -38,7 +36,7 @@ class BioNetV1(nn.Module):
         ventral = self.ventral_stream.trunk(input)
         dorsal = self.dorsal_stream.trunk(input)
 
-        t = Utils.ChSwap  # Swaps between channels-first channels-last format
+        t = Utils.ChannelSwap()  # Swaps between channels-first channels-last format
 
         for what, where, talk in zip(self.ventral_stream.ResNet,
                                      self.dorsal_stream.ResNet,
@@ -47,13 +45,13 @@ class BioNetV1(nn.Module):
             dorsal = t(talk(t(where(dorsal)),
                             t(ventral)))
 
-        out = t(self.projection(t(dorsal)))
+        out = self.projection(dorsal)
         return out
 
     """Aside from the way the modules are put together (via two disentangled streams), 
     there is not much that we have not seen before in some form
     
-    We have a CNN [resnet, convnext], ViT [worth 1000 words], CrossAttention [perceiver], 
+    We have a CNN [resnet, convmixer], ViT [worth 1000 words], CrossAttention [perceiver], 
     SelfAttention [all you need], and average pooling [pool].
     
     Here is a schematic visualization for those unfamiliar with Pytorch:
@@ -106,22 +104,6 @@ class BioNetV1(nn.Module):
     as opposed to other configurations, and disentanglement of perceptual signals, visuo-attention, 
     and motor function in the dorsal region."""
 
-    """We present a non-Transformer grid-processor for structured, 
-        arbitrary-size grids of vector inputs (e.g. image patches, audio waveform, etc.). 
-        The human brain processes sensory inputs with two interacting but distinct pathways, 
-        often referred to as “what” and “where” pathways. These are formally called 
-        the ventral and dorsal streams, beginning in the V1 Occipital region and diverging 
-        into the temporal lobe and lower parietal lobe respectively. We show that separating 
-        a CNN into analogous non-locality and locality streams, preserving the non-locality 
-        of the former throughout, with careful cross-attentions and skip connections mediating 
-        between the two, boosts classification accuracy in audio-visual and perceptual-motor tasks, 
-        while requiring linear-time-only operations w.r.t. grid size. 
-        With this separation of concerns, we get relational reasoning across feature vectors, 
-        one of the key advantages of transformers, localization without the need for locality 
-        embeddings (though we still partially employ them), configured simply in 
-        a biologically-inspired architecture that is faster to train and leaves a 
-        smaller computational footprint compared to ViT. We call this bi-occular network, BioNet."""
-
 
 # We can also efficiently substitute the patched MLPs with patched ViTs.
 
@@ -142,48 +124,8 @@ class BioNetV1(nn.Module):
 # a-leap-forward-in-computer-vision-facebook-ai-says-masked-autoencoders-are-scalable-vision-32c08fadd41f
 
 
-class BioNetV2(nn.Module):
-    """Disentangling "What" And "Where" Pathways In CNNs
-        - V2: Uses two CNNs, one local with more channels"""
-
-    def __init__(self, input_shape, out_channels=32, heads=8, output_dim=None):
-        super().__init__()
-
-        depth = 8
-        dorsal_fov = 128
-
-        self.ventral_stream = CNN(input_shape, out_channels, depth=depth, padding=1)
-        self.dorsal_stream = CNN(input_shape, out_channels=dorsal_fov, depth=depth, padding=1)
-
-        self.cross_talk = nn.ModuleList([CrossAttentionBlock(128, heads, out_channels)
-                                         for _ in range(depth)])
-
-        self.projection = nn.Identity() if output_dim is None \
-            else nn.Sequential(nn.AdaptiveAvgPool2d((1, 1)),
-                               nn.Flatten(),
-                               MLP(out_channels, output_dim, 1024))
-
-    def repr_shape(self, c, h, w):
-        return Utils.cnn_feature_shape(c, h, w, self.dorsal_stream, self.projection)
-
-    def forward(self, input):
-        ventral = self.ventral_stream.trunk(input)
-        dorsal = self.dorsal_stream.trunk(input)
-
-        t = Utils.ChSwap  # Swaps between channels-first channels-last format
-
-        for what, where, talk in zip(self.ventral_stream.CNN,
-                                     self.dorsal_stream.CNN,
-                                     self.cross_talk):
-            ventral = what(ventral)
-            dorsal = t(talk(t(where(dorsal)),
-                            t(ventral)))
-
-        out = t(self.projection(t(dorsal)))
-        return out
-
-
 from Blocks.Architectures.LermanBlocks.BioNet.NonLocality import NonLocalityCNN
+from Blocks.Architectures.LermanBlocks.BioNet.Locality import LocalityViT
 from Blocks.Architectures.MultiHeadAttention import SelfAttentionBlock
 
 
@@ -242,28 +184,3 @@ class BioNet(nn.Module):
 
         out = self.projection(self.repr(dorsal))
         return out
-
-
-"""Relates to CrossViT, but BioNet is different from ANY other model in the following ways:
-1. "What" and "Where" pathways - while past works have divided vision architectures into dual streams, 
-    dating all the way back to even the original AlexNet(!), BioNet takes inspiration from neuroscience
-    to separate concerns according to a non-locality and locality stream respectively.
-2. BioNet is a cognitive architecture. It seeks to hypothesize a model for an observed neocortical phenomenon,
-    and offer a more-technical justification for this structure than what a top-down neuroscience approach can offer,
-    in terms of invariance vs. equivariance and locality.
-3. BioNet consists of a novel and simple locality block that we refer to simply as Conv2dLocal which is efficient,
-    consistent with biological observation in ways that we will elaborate, and does not rely on locality inputs.
-4. The non-locality (dorsal - "What") stream consists of stacked dilations and rotations whose full 
-    non-locality of processing provides a truly /invariant/ CNN stream, not just equivariant. 
-    This non-locality is preserved through the full course of the neural architecture.
-5. We evaluate in RL rather than (just) computer vision, which importantly tests the most-modern of the two-stream
-    vision hypotheses: perceptual-motor. While object-locational theory has data dating into the mid 20th
-    century supporting it, more modern theories have challenged it. Our architecture reconciles both, the older
-    what-where two-stream hypothesis and the more modern visuo-motor two-stream hypothesis, neither of which have been
-    abjectly discredited nor concretely reconciled yet. 
-Also, the cross-attention of BioNet is capacitively the same as self-attention, while reducing the relational reasoning
-time complexity down to linear w.r.t. number features, making it a promising alternative to ViT if future works can
-justify its use in the computer vision setting beyond what we aim to do here.
-The new Conv2dLocal layer also has considerable potential, as an efficient parametric localizer, beyond just RL.
-Diagram: blocks in disjoint patches swiping horizontally, blocks vertically, different colors, two separate image copies 
-"""
